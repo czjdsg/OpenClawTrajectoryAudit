@@ -38,7 +38,7 @@ def cmd_inspect(args):
         network_path=_first_match(d, cfg.discovery.network_glob),
     )
     print(f"[*] 轨迹 {paths.traj_id}, 层: {paths.available()}")
-    traj = load_trajectory(paths)
+    traj = load_trajectory(paths, cfg.audit.syscall_filter == "security")
     evidence = assemble_evidence(traj, cfg)
     print("\n========== 汇编后的审计证据 (送入模型的内容) ==========\n")
     print(evidence)

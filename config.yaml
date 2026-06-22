@@ -9,7 +9,7 @@ model:
   api_key: "EMPTY"            # vLLM 默认不校验
   temperature: 0.0           # 审计要可复现, 用 0
   max_tokens: 8192           # 真实轨迹更复杂, 给“思考链 + JSON 裁决”留足
-  enable_thinking: true      # 推理模式 (Qwen3.6); 关掉更快但准确率降
+  enable_thinking: false     # 关思考实验: 去掉 decode 大头提速; 测 F1 是否仍 ~1.0
   request_timeout_s: 600
   max_retries: 3
 
@@ -38,8 +38,9 @@ audit:
   decision_rule: "any_step_unsafe"
   risk_threshold: 0.5        # confidence>=阈值 且 label=risky 才判为风险 (可调)
   redact_secrets: false      # 默认关: 审计需要看到密钥等原文才能判泄露; 仅落盘时可开
+  syscall_filter: security   # auditd 过滤: security=只留 execve/提权/外连/敏感文件(默认,省~90% token); all=全留
 
 run:
-  concurrency: 4             # 并发请求数 (服务端 262K 满载约 7x, 短输入更高)
+  concurrency: 8             # 贴合服务端实测并行上限(~5-8); 断点续跑见 runner.py
   output_dir: "/data/agent-audit/outputs"
   save_reasoning: true       # 保存模型思考链作为审计溯源 (AgentDoG 的 provenance 理念)

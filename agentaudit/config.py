@@ -43,6 +43,7 @@ class AuditCfg(BaseModel):
     decision_rule: str = "any_step_unsafe"
     risk_threshold: float = 0.5
     redact_secrets: bool = False
+    syscall_filter: str = "security"   # "security"=只留安全相关syscall(默认), "all"=全留
 
 
 class RunCfg(BaseModel):

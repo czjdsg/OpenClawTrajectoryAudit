@@ -74,7 +74,7 @@ class TrajectoryInput(BaseModel):
 
 # ----------------------------------------------------------------------------
 # 输出: 审计裁决. 阶段一只强约束 label/confidence/rationale;
-# risk_source/failure_mode/harm 为 AgentDoG 三维, 阶段二复用.
+# attack_categories 命中「恶意操作字典表」分类, 阶段二复用.
 # ----------------------------------------------------------------------------
 class AuditVerdict(BaseModel):
     traj_id: str
@@ -82,10 +82,8 @@ class AuditVerdict(BaseModel):
     risky: bool = False
     confidence: float = 0.0
     rationale: str = ""
-    # AgentDoG 三维细粒度 (阶段一可空)
-    risk_source: list[str] = Field(default_factory=list)
-    failure_mode: list[str] = Field(default_factory=list)
-    harm: list[str] = Field(default_factory=list)
+    # 命中的恶意操作分类 (来自字典表; 阶段一可空)
+    attack_categories: list[str] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
     # 记账 / 溯源
     model: str = ""

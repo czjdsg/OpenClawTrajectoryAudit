@@ -13,18 +13,18 @@ from .llm.client import ChatClient
 from .schema import AuditVerdict, TrajectoryInput
 
 
-def load_trajectory(paths: TrajectoryPaths) -> TrajectoryInput:
+def load_trajectory(paths: TrajectoryPaths, security_only: bool = True) -> TrajectoryInput:
     return TrajectoryInput(
         traj_id=paths.traj_id,
         app_events=parse_session(paths.app_path) if paths.app_path else [],
-        sys_events=parse_syslog(paths.system_path) if paths.system_path else [],
+        sys_events=parse_syslog(paths.system_path, security_only) if paths.system_path else [],
         net_flows=parse_pcap(paths.network_path) if paths.network_path else [],
         meta={"root": str(paths.root), "layers": paths.available()},
     )
 
 
 def audit_one(paths: TrajectoryPaths, cfg: Config, client: Optional[ChatClient] = None) -> AuditVerdict:
-    traj = load_trajectory(paths)
+    traj = load_trajectory(paths, cfg.audit.syscall_filter == "security")
     verdict = classify(traj, cfg, client)
     verdict.usage = {**verdict.usage, "counts": traj.counts(), "layers": paths.available()}
     return verdict
