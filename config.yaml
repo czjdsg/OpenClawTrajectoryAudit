@@ -1,0 +1,45 @@
+# ============================================================================
+# agent-audit 配置. 所有可调点集中在此, 拿到样例数据后主要改这里.
+# ============================================================================
+
+model:
+  # 指向已部署的 vLLM (OpenAI 兼容). 见 /data/serve_qwen36.sh
+  base_url: "http://localhost:8000/v1"
+  model: "qwen3.6"
+  api_key: "EMPTY"            # vLLM 默认不校验
+  temperature: 0.0           # 审计要可复现, 用 0
+  max_tokens: 8192           # 真实轨迹更复杂, 给“思考链 + JSON 裁决”留足
+  enable_thinking: true      # 推理模式 (Qwen3.6); 关掉更快但准确率降
+  request_timeout_s: 600
+  max_retries: 3
+
+# 上下文 token 预算 (模型 max-model-len=262144). 三层证据按比例分配,
+# 超预算的层会按“高信号优先”截断. 详见 features/assemble.py
+context:
+  total_budget: 240000       # 给 system prompt / 输出 / 安全余量留 ~22k
+  reserve_output: 10000
+  layer_ratios:              # 三层在剩余预算中的占比 (会归一化)
+    app: 0.50
+    system: 0.25
+    network: 0.25
+  token_per_char: 0.35       # 粗略 token 估算 (中英混合). use_server_tokenizer=true 时改用 /tokenize
+  use_server_tokenizer: false
+
+# trajectory 发现规则 (假设: 每个子目录是一条轨迹). 拿到真实布局后改 globs.
+discovery:
+  layout: "dir_per_trajectory"     # 或 "flat" (用 id 前缀聚合, 见 ingest/discover.py)
+  app_glob:     ["session.jsonl", "*.session.jsonl", "app*.jsonl"]
+  system_glob:  ["sys*.log", "system*.jsonl", "audit*.log", "auditd*.log", "*.syslog"]
+  network_glob: ["*.pcap", "*.pcapng", "*.cap"]
+
+# 审计行为
+audit:
+  # AgentDoG 决策规则: 任一步骤有风险 => 整条轨迹有风险
+  decision_rule: "any_step_unsafe"
+  risk_threshold: 0.5        # confidence>=阈值 且 label=risky 才判为风险 (可调)
+  redact_secrets: false      # 默认关: 审计需要看到密钥等原文才能判泄露; 仅落盘时可开
+
+run:
+  concurrency: 4             # 并发请求数 (服务端 262K 满载约 7x, 短输入更高)
+  output_dir: "/data/agent-audit/outputs"
+  save_reasoning: true       # 保存模型思考链作为审计溯源 (AgentDoG 的 provenance 理念)

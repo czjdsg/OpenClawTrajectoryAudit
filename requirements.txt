@@ -1,0 +1,7 @@
+# Core (requests + pydantic already present in base env)
+requests>=2.28
+pydantic>=2.0
+PyYAML>=6.0
+# Network-layer pcap parsing (pure-python, no system deps).
+# For richer dissection install tshark separately (see scripts/install_deps.sh).
+scapy>=2.5
