@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 from ..config import Config
+from ..ingest.sys_logs import _is_external_ip
 from ..schema import AppEvent, NetFlow, SysEvent, TrajectoryInput
 from .redact import redact_text
 
@@ -25,6 +26,9 @@ _SECRET_ACCESS = re.compile(r"(?i)(\.env\b|id_rsa|\.ssh/|api[_-]?key|secret|toke
 _DESTRUCTIVE = re.compile(r"(?i)(rm\s+-rf|mkfs|dd\s+if=.*of=/dev|>\s*/dev/sd|format\s|chmod\s+-R\s+777|:\(\)\{\s*:\|:&\s*\};:)")
 _PIPE_EXEC = re.compile(r"(?i)(curl|wget)[^|]*\|\s*(ba)?sh")
 _INJECTION = re.compile(r"(?i)(ignore (all )?previous instructions|disregard .* instructions|忽略(以上|之前)的?(所有)?指令|你现在是)")
+# 脚本/Shell/LOLBin 进程名(这些进程对外发起连接=高度可疑, 常为载荷下载/外联). 排除 node(智能体网关)
+_LOLBIN = re.compile(r"(?i)(powershell|pwsh|cmd\.exe|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|/bin/sh\b|\bbash\b|/bin/bash|python|perl|ruby)")
+_IPV4 = re.compile(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})")
 
 
 def est_tokens(text: str, cfg: Config) -> int:
@@ -120,6 +124,17 @@ def _heuristic_flags(traj: TrajectoryInput) -> str:
         flags.append(f"⚠ system layer: {len(priv)} privilege-escalation syscalls")
     if ext_flows and "http" not in app_text.lower() and "url" not in app_text.lower() and "curl" not in app_text.lower() and "wget" not in app_text.lower():
         flags.append(f"⚠ cross-layer inconsistency: app declares no network use, but network shows {len(ext_flows)} external connections ({', '.join(ext_hosts[:5]) or 'no hostnames'})")
+
+    # 脚本/Shell/LOLBin 进程对外连接(系统层事件里 进程名 + 外部IP 同现): 高度可疑(载荷下载/隐蔽外联)
+    shell_ext: set[str] = set()
+    for e in traj.sys_events:
+        s = e.summary
+        if e.kind == "net" and _LOLBIN.search(s):
+            for ip in _IPV4.findall(s):
+                if _is_external_ip(ip):
+                    shell_ext.add(ip)
+    if shell_ext:
+        flags.append(f"⚠ 脚本/Shell 进程(powershell/cmd/python 等)向外部地址发起连接 -> 高度可疑(载荷下载/隐蔽外联): {', '.join(sorted(shell_ext)[:6])}")
 
     if not flags:
         return "Cross-layer heuristic flags: (no obvious high-risk signal; still requires holistic judgment by the model)"

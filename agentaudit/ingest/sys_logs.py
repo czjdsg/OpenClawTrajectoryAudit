@@ -327,6 +327,9 @@ def _win_kind(eid: int, data: dict) -> str:
 def _win_relevant(eid: int, kind: str, data: dict) -> bool:
     if eid == 10:  # ProcessAccess: 仅访问 lsass 等敏感进程才高危, 否则是 OS 噪声
         return bool(_WIN_SENSITIVE_PROC.search(str(data.get("TargetImage", ""))))
+    if eid == 22:  # DNS 查询: 按域名判 — 丢反向解析(.arpa)/.local mDNS 噪声, 留真实域名(潜在 C2)
+        q = str(data.get("QueryName", "")).lower().rstrip(".")
+        return bool(q) and not (q.endswith(".local") or q.endswith(".arpa"))
     if kind in ("exec", "priv"):
         return True
     if kind == "net":
