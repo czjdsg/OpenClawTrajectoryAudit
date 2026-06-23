@@ -247,10 +247,12 @@ _WIN_DANGER = {8, 10, 25, 4672, 4673, 4674, 7045, 4697, 4698, 4699, 4700, 4702, 
 
 # Windows 敏感对象(替换 Linux 的 /etc/shadow、.ssh): 凭据库/系统hive/lsass/可疑落地等
 _WIN_SENSITIVE = re.compile(
-    r"(?i)(\\SAM\b|\\SYSTEM\b|\\SECURITY\b|ntds\.dit|lsass|\\System32\\config|"
-    r"Login Data|\.kdbx|\.ssh\\|id_rsa|\\Credentials\\|\\Vault\\|\\Microsoft\\Protect\\|"
+    r"(?i)(ntds\.dit|\\System32\\config\\(SAM|SYSTEM|SECURITY)|lsass\.dmp|"
+    r"Login Data|\.kdbx|\.ssh\\|id_rsa|\\Vault\\|\\Microsoft\\Protect\\|"
     r"sethc\.exe|utilman\.exe|cookies\.sqlite|\\Temp\\[^\\]*\.(exe|dll|ps1|bat|scr))"
 )
+# 访问这些目标进程才算高危 (EID10 ProcessAccess); 否则是 OS 间正常 ProcessAccess 噪声
+_WIN_SENSITIVE_PROC = re.compile(r"(?i)(lsass\.exe|lsaiso\.exe|winlogon\.exe)")
 # 持久化位置(注册表 Run/服务/IFEO/Winlogon/计划任务)
 _WIN_PERSIST = re.compile(
     r"(?i)(\\CurrentVersion\\Run|\\RunOnce|\\Services\\|Image File Execution Options|"
@@ -274,7 +276,14 @@ def _is_external_ip(ip: str) -> bool:
 
 
 def _win_extract(rec: dict) -> tuple[int | None, dict]:
-    """抽 (EventID, 字段dict), 兼容嵌套(Event/System/EventData/Data)与扁平/winlog/EvtxECmd 形态。"""
+    """抽 (EventID, 字段dict), 兼容: XmlData 内嵌 XML / 嵌套(Event/EventData/Data) / 扁平/winlog。"""
+    # 自定义导出: 字段都在 XmlData 字符串(完整 Windows Event XML)里
+    xml = rec.get("XmlData") or rec.get("Xml") or rec.get("xml")
+    if isinstance(xml, str) and "<Event" in xml:
+        sub = _parse_win_xml(xml)
+        if sub:
+            xeid, xdata = _win_extract(sub[0])
+            return (_int(rec.get("EventID")) or xeid), xdata
     if isinstance(rec.get("Event"), dict):
         ev = rec["Event"]
         sysd = ev.get("System", {}) if isinstance(ev.get("System"), dict) else {}
@@ -316,6 +325,8 @@ def _win_kind(eid: int, data: dict) -> str:
 
 
 def _win_relevant(eid: int, kind: str, data: dict) -> bool:
+    if eid == 10:  # ProcessAccess: 仅访问 lsass 等敏感进程才高危, 否则是 OS 噪声
+        return bool(_WIN_SENSITIVE_PROC.search(str(data.get("TargetImage", ""))))
     if kind in ("exec", "priv"):
         return True
     if kind == "net":
@@ -342,7 +353,7 @@ def _parse_win_xml(text: str) -> list[dict]:
     out: list[dict] = []
     for ch in re.findall(r"<Event[ >].*?</Event>", text, re.S):
         try:
-            root = ET.fromstring(re.sub(r'\sxmlns="[^"]*"', "", ch))
+            root = ET.fromstring(re.sub(r"""\sxmlns=['"][^'"]*['"]""", "", ch))
         except ET.ParseError:
             continue
         sysd = root.find("System")

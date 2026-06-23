@@ -29,7 +29,7 @@ context:
 discovery:
   layout: "dir_per_trajectory"     # 或 "flat" (用 id 前缀聚合, 见 ingest/discover.py)
   app_glob:     ["session.jsonl", "*.session.jsonl", "app*.jsonl"]
-  system_glob:  ["sys*.log", "system*.jsonl", "audit*.log", "auditd*.log", "*.syslog"]
+  system_glob:  ["audit.log", "audit*.log", "auditd*.log", "sysmon.jsonl", "*sysmon*.jsonl", "sys*.log", "system*.jsonl", "*.syslog"]
   network_glob: ["*.pcap", "*.pcapng", "*.cap"]
 
 # 审计行为
