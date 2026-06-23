@@ -47,6 +47,21 @@ _SYSNO_X86 = {
     "313": "finit_module", "316": "renameat2", "322": "execveat", "437": "openat2",
 }
 
+# aarch64/arm64 syscall 号 -> 名 (asm-generic; arch=c00000b7)。号与 x86_64 完全不同!
+_SYSNO_ARM64 = {
+    "63": "read", "64": "write", "56": "openat", "437": "openat2", "34": "mkdirat", "35": "unlinkat",
+    "36": "symlink", "37": "link", "38": "renameat", "276": "renameat2", "45": "truncate",
+    "52": "fchmod", "53": "fchmodat", "54": "fchownat", "55": "fchown",
+    "198": "socket", "200": "bind", "201": "listen", "202": "accept", "242": "accept4", "203": "connect",
+    "206": "sendto", "207": "recvfrom", "211": "sendmsg", "212": "recvmsg",
+    "146": "setuid", "144": "setgid", "145": "setreuid", "143": "setregid", "147": "setresuid",
+    "149": "setresgid", "151": "setfsuid", "91": "capset", "117": "ptrace",
+    "40": "mount", "39": "umount2", "51": "chroot", "41": "pivot_root", "105": "init_module",
+    "273": "finit_module", "106": "delete_module", "142": "reboot", "221": "execve", "281": "execveat",
+}
+# auditd arch 字段(a0 的 AUDIT_ARCH 常量, 小写十六进制)-> 对应 syscall 表
+_ARCH_MAP = {"c000003e": _SYSNO_X86, "c00000b7": _SYSNO_ARM64}  # x86_64 / aarch64
+
 # 安全敏感文件路径 (访问这些才保留 file 事件; 工作区内常规文件不留)
 _SENSITIVE_PATH = re.compile(
     r"(?i)("
@@ -108,11 +123,16 @@ def _parse_auditd(lines: list[str], security_only: bool) -> list[SysEvent]:
         g["types"].add(typ)
         f = _fields(line)
         if typ == "SYSCALL":
-            for k in ("SYSCALL", "comm", "exe", "success", "key"):
+            for k in ("SYSCALL", "comm", "exe", "success", "key", "arch"):
                 if k in f:
                     g["f"][k] = f[k]
-            if "SYSCALL" not in f and "syscall" in f:
-                g["f"]["SYSCALL"] = _SYSNO_X86.get(f["syscall"], "syscall#" + f["syscall"])
+            if "SYSCALL" not in f and "syscall" in f:  # 非 enriched: 按架构查表
+                amap = _ARCH_MAP.get((f.get("arch") or "").lower())
+                if amap is not None:
+                    g["f"]["SYSCALL"] = amap.get(f["syscall"], "syscall#" + f["syscall"])
+                else:  # 未知架构: 无法可靠映射 -> 标记, 后面 fail-safe 全保留
+                    g["f"]["SYSCALL"] = "syscall#" + f["syscall"]
+                    g["f"]["_unknown_arch"] = (f.get("arch") or "?")
         elif typ == "PROCTITLE" and "proctitle" in f:
             g["f"]["cmd"] = _decode_proctitle(f["proctitle"])
         elif typ == "EXECVE":
@@ -127,6 +147,7 @@ def _parse_auditd(lines: list[str], security_only: bool) -> list[SysEvent]:
     seen: dict[str, dict] = {}
     seen_order: list[str] = []
     dropped: dict[str, int] = {}
+    unknown_arch: set[str] = set()
     for seq in order:
         g = groups[seq]
         if "SYSCALL" not in g["types"] and "EXECVE" not in g["types"]:
@@ -134,7 +155,11 @@ def _parse_auditd(lines: list[str], security_only: bool) -> list[SysEvent]:
         f = g["f"]
         name = f.get("SYSCALL", "?")
         kind = _classify_syscall(name)
-        if security_only and not _is_relevant(name, kind, g["paths"], f.get("key")):
+        ua = f.get("_unknown_arch")
+        if ua:
+            unknown_arch.add(ua)
+        # 未知架构 fail-safe: 无法可靠映射 syscall -> 不过滤, 宁多留勿漏
+        if security_only and not ua and not _is_relevant(name, kind, g["paths"], f.get("key")):
             dropped[kind] = dropped.get(kind, 0) + 1
             continue
         parts = [name]
@@ -167,6 +192,9 @@ def _parse_auditd(lines: list[str], security_only: bool) -> list[SysEvent]:
         drop_str = ", ".join(f"{k}:{v}" for k, v in sorted(dropped.items(), key=lambda x: -x[1]))
         events.append(SysEvent(idx=len(events), kind="other",
                                summary=f"[+ {sum(dropped.values())} 条常规 syscall 被安全过滤折叠: {drop_str} (工作区内读写/网关收发等噪声)]"))
+    if unknown_arch:
+        events.append(SysEvent(idx=len(events), kind="other",
+                               summary=f"[⚠ 未知架构 {','.join(sorted(unknown_arch))} 的数字 syscall(非 x86_64/aarch64)无法可靠映射 -> 已 fail-safe 全部保留不过滤; 建议在 _ARCH_MAP 补该架构 syscall 表]"))
     return events
 
 
