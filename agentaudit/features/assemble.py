@@ -141,13 +141,29 @@ def _heuristic_flags(traj: TrajectoryInput) -> str:
     return "Cross-layer heuristic flags (hints only, not conclusions):\n" + "\n".join(f"- {x}" for x in flags)
 
 
+def _allocate(sizes: dict[str, int], avail: int) -> dict[str, int]:
+    """动态预算 water-filling: 从最小的层开始, 小层拿满, 省下的额度滚给大层。
+    总需求 <= avail 时人人拿满(不截断); 超了才砍最大的层。取代固定 50/25/25 比例。"""
+    out: dict[str, int] = {}
+    rem = avail
+    for i, k in enumerate(sorted(sizes, key=lambda x: sizes[x])):
+        share = rem // (len(sizes) - i)
+        out[k] = min(sizes[k], share)
+        rem -= out[k]
+    return out
+
+
 def assemble_evidence(traj: TrajectoryInput, cfg: Config) -> str:
     avail = cfg.context.total_budget - cfg.context.reserve_output
-    ratios = cfg.context.layer_ratios
-    s = sum(ratios.values()) or 1.0
-    b_app = int(avail * ratios.get("app", 0.5) / s)
-    b_sys = int(avail * ratios.get("system", 0.25) / s)
-    b_net = int(avail * ratios.get("network", 0.25) / s)
+    tpc = cfg.context.token_per_char
+    # 动态预算(water-filling): 按各层实际所需分配, 总量<=avail 时不截断; 不再固定 50/25/25
+    raw = {
+        "app": int(sum(min(len(e.text), 4000) + 20 for e in traj.app_events) * tpc) + 1,
+        "system": int(sum(len(e.summary) + 8 for e in traj.sys_events) * tpc) + 1,
+        "network": int(sum(len(f"{f.proto} {f.src}->{f.dst}:{f.dport} {f.host or ''} {f.info}") + 10 for f in traj.net_flows) * tpc) + 1,
+    }
+    b = _allocate(raw, avail)
+    b_app, b_sys, b_net = b["app"], b["system"], b["network"]
 
     app = _render_app(traj.app_events, b_app, cfg)
     sysl = _render_system(traj.sys_events, b_sys, cfg)

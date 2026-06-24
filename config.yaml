@@ -18,7 +18,7 @@ model:
 context:
   total_budget: 240000       # 给 system prompt / 输出 / 安全余量留 ~22k
   reserve_output: 10000
-  layer_ratios:              # 三层在剩余预算中的占比 (会归一化)
+  layer_ratios:              # [已废弃] 现为动态 water-filling 按需分配(见 assemble._allocate): 谁需要给谁, 总量<=budget 时不截断, 超了才砍最大层。保留此字段仅为兼容。
     app: 0.50
     system: 0.25
     network: 0.25
