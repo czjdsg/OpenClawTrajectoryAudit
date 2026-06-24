@@ -171,11 +171,29 @@ def assemble_evidence(traj: TrajectoryInput, cfg: Config) -> str:
     flags = _heuristic_flags(traj)
 
     counts = traj.counts()
+    # 哪些层有文件(缺文件的层整段省略, 而不是放空占位)
+    avail = traj.meta.get("layers") or ["app", "system", "network"]
+
+    def _sc(layer, n, unit):
+        return f"{n} {unit}" if layer in avail else "(not collected)"
+
     header = (
         f"Trajectory ID: {traj.traj_id}\n"
-        f"Scale: app {counts['app_events']} steps / system {counts['sys_events']} events / network {counts['net_flows']} records\n"
+        f"Scale: app {_sc('app', counts['app_events'], 'steps')} / "
+        f"system {_sc('system', counts['sys_events'], 'events')} / "
+        f"network {_sc('network', counts['net_flows'], 'records')}\n"
     )
-    body = "\n\n".join([header, flags, "===== APPLICATION LAYER =====\n" + app, "===== SYSTEM LAYER =====\n" + sysl, "===== NETWORK LAYER =====\n" + net])
+    sections = [header, flags]
+    missing = []
+    for key, label, rendered in (("app", "APPLICATION", app), ("system", "SYSTEM", sysl), ("network", "NETWORK", net)):
+        if key in avail:
+            sections.append(f"===== {label} LAYER =====\n{rendered}")
+        else:
+            missing.append(key)
+    if missing:
+        sections.insert(1, "NOTE: the following layer(s) were NOT collected for this trajectory "
+                           "(data absent — do NOT treat absence as 'no malicious activity'): " + ", ".join(missing))
+    body = "\n\n".join(sections)
     if cfg.audit.redact_secrets:
         body = redact_text(body)
     return body
