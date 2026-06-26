@@ -4,6 +4,7 @@
   python -m agentaudit selftest
   python -m agentaudit inspect <轨迹目录> [--no-model]
   python -m agentaudit audit <数据集目录> [--out DIR]
+  python -m agentaudit rulefill <数据集目录> [--out DIR]   # 规则兜底补齐未跑完的(不调模型)
   python -m agentaudit eval <results.jsonl> <labels.(jsonl|csv)>
   python -m agentaudit export <results.jsonl> <submission.csv>   # 导出 md5,label 提交格式
 """
@@ -20,7 +21,7 @@ from .ingest.discover import TrajectoryPaths, _first_match
 from .llm.classify import classify
 from .llm.client import ChatClient
 from .pipeline import load_trajectory
-from .runner import run_dataset
+from .runner import rulefill_dataset, run_dataset
 
 
 def cmd_health(args):
@@ -54,6 +55,13 @@ def cmd_audit(args):
     if args.out:
         cfg.run.output_dir = args.out
     run_dataset(args.dataset, cfg)
+
+
+def cmd_rulefill(args):
+    cfg = load_config(args.config)
+    if args.out:
+        cfg.run.output_dir = args.out
+    rulefill_dataset(args.dataset, cfg)
 
 
 def cmd_eval(args):
@@ -99,6 +107,11 @@ def main():
     p.add_argument("dataset", help="数据集目录")
     p.add_argument("--out", default=None, help="输出目录 (覆盖 config)")
     p.set_defaults(func=cmd_audit)
+
+    p = sub.add_parser("rulefill", help="规则兜底: 模型已判的保留, 剩余/error 用规则补齐(不调模型)")
+    p.add_argument("dataset", help="数据集目录(同 audit)")
+    p.add_argument("--out", default=None, help="输出目录(须与 audit 同一目录, 含已有 results.jsonl)")
+    p.set_defaults(func=cmd_rulefill)
 
     p = sub.add_parser("eval", help="对照标签算指标")
     p.add_argument("results", help="results.jsonl")

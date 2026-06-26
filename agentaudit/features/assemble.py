@@ -23,7 +23,7 @@ _HI_APP = re.compile(
     r"base64\s+-d|nc\s+-|/dev/tcp/|ignore (all )?previous|忽略(以上|之前)的?指令)"
 )
 _SECRET_ACCESS = re.compile(r"(?i)(\.env\b|id_rsa|\.ssh/|api[_-]?key|secret|token|password|credential|AKIA|私钥|密钥)")
-_DESTRUCTIVE = re.compile(r"(?i)(rm\s+-rf|mkfs|dd\s+if=.*of=/dev|>\s*/dev/sd|format\s|chmod\s+-R\s+777|:\(\)\{\s*:\|:&\s*\};:)")
+_DESTRUCTIVE = re.compile(r"(?i)(rm\s+-rf|mkfs|dd\s+if=.*of=/dev|>\s*/dev/sd|format\s+[a-zA-Z]:|chmod\s+-R\s+777|:\(\)\{\s*:\|:&\s*\};:)")
 _PIPE_EXEC = re.compile(r"(?i)(curl|wget)[^|]*\|\s*(ba)?sh")
 _INJECTION = re.compile(r"(?i)(ignore (all )?previous instructions|disregard .* instructions|忽略(以上|之前)的?(所有)?指令|你现在是)")
 # 脚本/Shell/LOLBin 进程名(这些进程对外发起连接=高度可疑, 常为载荷下载/外联). 排除 node(智能体网关)

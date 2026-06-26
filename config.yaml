@@ -41,6 +41,6 @@ audit:
   syscall_filter: security   # auditd 过滤: security=只留 execve/提权/外连/敏感文件(默认,省~90% token); all=全留
 
 run:
-  concurrency: 8             # 贴合服务端实测并行上限(~5-8); 断点续跑见 runner.py
+  concurrency: 8             # 实测: 8档自身就在306~400s抖动(调度顺序致±~30%), >比< 8/16/32差异还大; 16=430/32=393s 没一档比8最好成绩快=加并发无提速。服务端并行硬顶~15-16(非KV限,32并发时仅跑15排17,KV才51%)。8为合理默认, 提速靠加卡/砍prompt/预筛
   output_dir: "/data/agent-audit/outputs"
   save_reasoning: true       # 保存模型思考链作为审计溯源 (AgentDoG 的 provenance 理念)

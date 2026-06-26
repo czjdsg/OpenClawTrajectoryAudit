@@ -9,7 +9,7 @@ from pathlib import Path
 from .config import Config
 from .ingest.discover import discover
 from .llm.client import ChatClient
-from .pipeline import audit_one
+from .pipeline import audit_one, load_trajectory
 from .schema import AuditVerdict
 
 
@@ -61,7 +61,13 @@ def run_dataset(dataset_dir: str, cfg: Config) -> list[AuditVerdict]:
                 mark = {"risky": "🔴", "safe": "🟢", "error": "⚠️"}.get(v.label, "?")
                 print(f"  [{n}/{len(pending)}] {mark} {v.traj_id[:12]} conf={v.confidence:.2f} cats={v.attack_categories} {v.rationale[:40]}")
 
-    # 汇总: 读全量文件, 每个 traj 取最后一条非 error
+    _, verdicts = _summarize(dataset_dir, cfg, out_dir, results_path, time.time() - t0)
+    return verdicts
+
+
+def _summarize(dataset_dir: str, cfg: Config, out_dir: Path, results_path: Path, elapsed_s: float):
+    """读全量 results.jsonl, 每个 traj 取最后一条非 error, 写 summary.json + submission.csv。
+    run_dataset(模型) 与 rulefill_dataset(规则兜底) 共用。"""
     latest: dict[str, dict] = {}
     for r in _read_rows(results_path):
         tid = r.get("traj_id")
@@ -70,11 +76,13 @@ def run_dataset(dataset_dir: str, cfg: Config) -> list[AuditVerdict]:
     verdicts = [AuditVerdict(**{k: val for k, val in r.items() if k in AuditVerdict.model_fields}) for r in latest.values()]
     n_risky = sum(1 for v in verdicts if v.risky)
     n_err = sum(1 for v in verdicts if v.label == "error")
+    n_rule = sum(1 for v in verdicts if str(v.model).startswith("rule"))
     summary = {
         "dataset": dataset_dir, "model": cfg.model.model,
         "total": len(verdicts), "risky": n_risky,
         "safe": len(verdicts) - n_risky - n_err, "error": n_err,
-        "elapsed_s": round(time.time() - t0, 1),
+        "by_method": {"model": len(verdicts) - n_rule, "rule": n_rule},  # 规则兜底条数(model=rule:*)
+        "elapsed_s": round(elapsed_s, 1),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     # 提交格式 md5,label
@@ -84,7 +92,49 @@ def run_dataset(dataset_dir: str, cfg: Config) -> list[AuditVerdict]:
         sub_note = f"{sub['n']} 行" + (f", ⚠{sub['errors']} 条 error 按0占位(建议重跑消除)" if sub["errors"] else "")
     except Exception as e:  # noqa: BLE001
         sub_note = f"导出失败: {e}"
-    print(f"[*] 汇总: total={summary['total']} risky={n_risky} safe={summary['safe']} error={n_err}, 本轮用时 {summary['elapsed_s']}s")
+    print(f"[*] 汇总: total={summary['total']} risky={n_risky} safe={summary['safe']} error={n_err} "
+          f"(模型判 {summary['by_method']['model']}, 规则兜底 {n_rule}), 本轮用时 {summary['elapsed_s']}s")
     print(f"[*] 结果: {results_path}")
     print(f"[*] 提交文件(md5,label): {out_dir / 'submission.csv'} ({sub_note})")
-    return verdicts
+    return summary, verdicts
+
+
+def rulefill_dataset(dataset_dir: str, cfg: Config) -> int:
+    """规则兜底补齐: 模型已判好的(非 error)保留, 剩余 + error 的用 rules.rule_classify 判定,
+    一并写回同一 results.jsonl, 重新生成 summary.json + submission.csv。
+    用于模型在限定时间内跑不完时收尾。返回本次规则补判的条数。"""
+    from .rules import rule_classify
+
+    trajs = discover(dataset_dir, cfg.discovery)
+    if not trajs:
+        print(f"[!] 在 {dataset_dir} 未发现轨迹 (检查 config.discovery 的 glob)")
+        return 0
+    out_dir = Path(cfg.run.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    results_path = out_dir / "results.jsonl"
+
+    done = {r.get("traj_id") for r in _read_rows(results_path) if r.get("label") != "error"}
+    pending = [tp for tp in trajs if tp.traj_id not in done]
+    print(f"[*] 共 {len(trajs)} 条; 模型已判 {len(done)} (保留); 规则兜底待补 {len(pending)} 条")
+
+    sec = cfg.audit.syscall_filter == "security"
+    t0 = time.time()
+    n_risky = 0
+    if pending:
+        with results_path.open("a", encoding="utf-8") as fout:
+            for n, tp in enumerate(pending, 1):
+                try:
+                    v = rule_classify(load_trajectory(tp, sec))
+                except Exception as e:  # noqa: BLE001  解析失败也要给个判定, 占位 safe(=submission 0)
+                    v = AuditVerdict(traj_id=tp.traj_id, label="safe", risky=False, model="rule:v1",
+                                     rationale=f"[规则兜底] 解析失败, 占位 safe: {e}",
+                                     usage={"method": "rule_parse_error"})
+                fout.write(json.dumps(v.to_row(), ensure_ascii=False) + "\n")
+                fout.flush()
+                n_risky += 1 if v.risky else 0
+                if n % 500 == 0 or n == len(pending):
+                    print(f"  规则兜底 {n}/{len(pending)} (本批 risky {n_risky}) ...")
+
+    _summarize(dataset_dir, cfg, out_dir, results_path, time.time() - t0)
+    print(f"[*] 规则兜底完成: 本次补判 {len(pending)} 条 (其中 risky {n_risky})")
+    return len(pending)

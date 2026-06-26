@@ -137,7 +137,8 @@ PYTHONPATH=$PWD python3 -m agentaudit inspect /data/fulldata/extracted/<md5> --n
 | **D. vLLM 起不来 / `layer does not exist` / `docker images` 空** | docker 镜像损坏,**只能在线修**(见下方"docker 恢复")。所以务必出发前在 §0 确认过 |
 | **E. 磁盘满** | `df -h /data`;清旧 outputs / 解压目录 |
 | **F. 机器重启** | vLLM 容器会自动回来(--restart);没回来 `docker start vllm-qwen36`。审计任务**不会**自动回来 → 重跑 run_audit.sh 续跑 |
-| **G. 想提速 / 分批** | 已是关思考。可改 `config.yaml` 的 `run.concurrency`;或把 extracted 拆成几个子目录、分别 `--out` 并行跑 |
+| **G. 想提速 / 分批** | **别调并发**:实测 GPU 在并发~8已算力饱和,调到16反而更慢(306s→430s)。真正的提速杠杆只有:① 加卡/加机(算力线性涨)② 砍 prompt(系统层占~82% token,收紧 `syscall_filter`/敏感路径白名单)③ 启发式预筛跳过明显 benign。分批只是把任务拆到多机/多卡,单机拆 `--out` 并行无意义(同一张卡) |
+| **H. 时间不够 / 跑不完** | 用**规则兜底收尾**:中断模型、剩余用规则判定补齐,见 §8 |
 
 ### docker 恢复(镜像损坏 / `docker images` 空 / vLLM 起不来)
 镜像冷备份在**系统盘** `/root/vllm-ascend-v0.21.0rc1.tar`(18G),**断网也能恢复**:
@@ -165,5 +166,32 @@ bash /data/serve_qwen36.sh                                                # 起 
 - token 预算 `total_budget 240000`,动态 water-filling 按需分配(各层不会被固定比例误截断)
 
 ## 7. 估算(单机 2×910B2, 关思考)
-- ~13.9s/条(并发8);5万 ≈ 8 天 / 10万 ≈ 16 天(可加卡/分批缩短)。
-- 100G 数据 ≈ 5–8 万条(压缩态)。
+- 实测 ~14–18s/条(并发8, 同设置自身会因调度顺序±~30%抖动);5万 ≈ 8–10 天 / 10万 ≈ 16–21 天。
+- 100G 数据 ≈ 5–8 万条(压缩态)→ 约 8–17 天。
+- **并发只能到 8**:实测 8/16/32 = 306/430/393s, 没一档比8快(GPU 在~8已算力饱和, 服务端并行还硬顶~15-16)。提速只能加卡/砍prompt/预筛, 调并发无效。
+
+---
+
+## 8. 时间不够: 规则兜底收尾(模型跑不完时用)
+
+若到了 deadline(如~10天)模型还没跑完,**不要硬等**:中断模型,已判好的保留,剩余轨迹用**规则判定**(不调模型,秒级)补齐,凑齐完整 submission。
+
+```bash
+cd /data/agent-audit
+bash scripts/finish_with_rules.sh /data/fulldata/extracted /data/fulldata/outputs
+```
+
+脚本做三件事:① `tmux kill-session audit` 中断模型(结果逐条 flush 落盘,**已判的一条不丢**,只有飞行中的≤8条会被规则重判)② 剩余 + error 的轨迹跑 `agentaudit rulefill` 规则判定 ③ 重新生成 `submission.csv` / `summary.json`(`by_method` 字段显示模型/规则各判了多少条)。
+
+手动等价:
+```bash
+tmux kill-session -t audit 2>/dev/null         # 中断模型(可选, 不在跑就跳过)
+cd /data/agent-audit
+PYTHONPATH=$PWD python3 -m agentaudit rulefill /data/fulldata/extracted --out /data/fulldata/outputs
+```
+
+**规则判定是什么**:用跨层启发式信号(破坏性命令 / 密钥+外连 / 提示注入 / 脚本外连 / 提权 / 跨层矛盾),带严重度权重判 risky/safe,`model` 字段标 `rule:v1` 以便溯源区分。
+
+**效果(22样例实测)**:**召回=1.0(0 漏报)**、精确≈0.5、F1≈0.67 —— 刻意**召回优先**(安全审计宁可多报不可漏报)。组合 F1 取决于模型跑了多少:模型 0%→0.67(纯规则)、~45%→0.86、100%→1.0。即**模型判过的尾部用规则补,只多报、不漏报**。
+
+> 规则兜底是**保底**不是替代:能让模型多跑就多跑(F1 更高),实在跑不完才用它收尾。规则结果可单独筛出来复核:`python3 -c "import json;[print(r['traj_id'],r['rationale']) for r in map(json.loads,open('OUT/results.jsonl')) if str(r.get('model','')).startswith('rule') and r['risky']]"`
