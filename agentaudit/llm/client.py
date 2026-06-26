@@ -24,6 +24,10 @@ class ChatClient:
         self.api_key = api_key
         self.timeout_s = timeout_s
         self.max_retries = max_retries
+        # 只连本地 vLLM: 用 trust_env=False 忽略环境里的 http(s)_proxy(如 clash 127.0.0.1:8990),
+        # 否则断网时本地请求会被路由到挂掉的代理 -> 全部失败。
+        self._sess = requests.Session()
+        self._sess.trust_env = False
 
     @classmethod
     def from_cfg(cls, cfg: Config) -> "ChatClient":
@@ -57,7 +61,7 @@ class ChatClient:
         last_err: Optional[Exception] = None
         for attempt in range(self.max_retries):
             try:
-                r = requests.post(url, json=body, headers=headers, timeout=self.timeout_s)
+                r = self._sess.post(url, json=body, headers=headers, timeout=self.timeout_s)
                 r.raise_for_status()
                 data = r.json()
                 msg = data["choices"][0]["message"]
@@ -77,7 +81,7 @@ class ChatClient:
     def count_tokens(self, text: str) -> Optional[int]:
         """用 vLLM /tokenize 精确计数 (可选). 失败返回 None."""
         try:
-            r = requests.post(
+            r = self._sess.post(
                 f"{self.base_url.rsplit('/v1', 1)[0]}/tokenize",
                 json={"model": self.model, "prompt": text},
                 timeout=30,
@@ -89,7 +93,7 @@ class ChatClient:
 
     def health(self) -> bool:
         try:
-            r = requests.get(f"{self.base_url}/models", timeout=10)
+            r = self._sess.get(f"{self.base_url}/models", timeout=10)
             return r.status_code == 200
         except Exception:
             return False
