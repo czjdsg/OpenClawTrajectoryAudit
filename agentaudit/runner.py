@@ -27,6 +27,35 @@ def _read_rows(path: Path) -> list[dict]:
     return rows
 
 
+def _utok(u: dict, *keys: str) -> int:
+    """从 usage 取 token 数 (兼容 prompt_tokens/input_tokens 等命名)。"""
+    for k in keys:
+        v = u.get(k)
+        if isinstance(v, (int, float)):
+            return int(v)
+    return 0
+
+
+def _token_stats(verdicts: list[AuditVerdict]) -> dict:
+    """聚合 token 消耗 (只统计走了模型、有 prompt token 的条; 规则兜底条无 token)。"""
+    pairs = []
+    for v in verdicts:
+        p = _utok(v.usage, "prompt_tokens", "input_tokens")
+        if p:  # 有输入 token = 走过模型
+            c = _utok(v.usage, "completion_tokens", "output_tokens")
+            pairs.append((p, c))
+    n = len(pairs)
+    if not n:
+        return {"n_model_calls": 0}
+    sp, sc = sum(p for p, _ in pairs), sum(c for _, c in pairs)
+    return {
+        "n_model_calls": n,
+        "prompt_avg": round(sp / n), "prompt_max": max(p for p, _ in pairs),
+        "completion_avg": round(sc / n), "completion_max": max(c for _, c in pairs),
+        "total_avg": round((sp + sc) / n), "total_sum": sp + sc,
+    }
+
+
 def run_dataset(dataset_dir: str, cfg: Config) -> list[AuditVerdict]:
     trajs = discover(dataset_dir, cfg.discovery)
     if not trajs:
@@ -59,7 +88,8 @@ def run_dataset(dataset_dir: str, cfg: Config) -> list[AuditVerdict]:
                 fout.write(json.dumps(v.to_row(), ensure_ascii=False) + "\n")
                 fout.flush()
                 mark = {"risky": "🔴", "safe": "🟢", "error": "⚠️"}.get(v.label, "?")
-                print(f"  [{n}/{len(pending)}] {mark} {v.traj_id[:12]} conf={v.confidence:.2f} cats={v.attack_categories} {v.rationale[:40]}")
+                tok = _utok(v.usage, "prompt_tokens", "input_tokens")
+                print(f"  [{n}/{len(pending)}] {mark} {v.traj_id[:12]} conf={v.confidence:.2f} tok_in={tok} cats={v.attack_categories} {v.rationale[:40]}")
 
     _, verdicts = _summarize(dataset_dir, cfg, out_dir, results_path, time.time() - t0)
     return verdicts
@@ -77,11 +107,13 @@ def _summarize(dataset_dir: str, cfg: Config, out_dir: Path, results_path: Path,
     n_risky = sum(1 for v in verdicts if v.risky)
     n_err = sum(1 for v in verdicts if v.label == "error")
     n_rule = sum(1 for v in verdicts if str(v.model).startswith("rule"))
+    tokens = _token_stats(verdicts)
     summary = {
         "dataset": dataset_dir, "model": cfg.model.model,
         "total": len(verdicts), "risky": n_risky,
         "safe": len(verdicts) - n_risky - n_err, "error": n_err,
         "by_method": {"model": len(verdicts) - n_rule, "rule": n_rule},  # 规则兜底条数(model=rule:*)
+        "tokens": tokens,   # 仅统计走了模型的条(规则兜底无 token)
         "elapsed_s": round(elapsed_s, 1),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -94,6 +126,9 @@ def _summarize(dataset_dir: str, cfg: Config, out_dir: Path, results_path: Path,
         sub_note = f"导出失败: {e}"
     print(f"[*] 汇总: total={summary['total']} risky={n_risky} safe={summary['safe']} error={n_err} "
           f"(模型判 {summary['by_method']['model']}, 规则兜底 {n_rule}), 本轮用时 {summary['elapsed_s']}s")
+    if tokens["n_model_calls"]:
+        print(f"[*] token: 均 {tokens['total_avg']:,}/条 (输入 {tokens['prompt_avg']:,} + 输出 {tokens['completion_avg']:,}; "
+              f"最大输入 {tokens['prompt_max']:,}); {tokens['n_model_calls']} 次模型调用合计 {tokens['total_sum']:,}")
     print(f"[*] 结果: {results_path}")
     print(f"[*] 提交文件(md5,label): {out_dir / 'submission.csv'} ({sub_note})")
     return summary, verdicts
