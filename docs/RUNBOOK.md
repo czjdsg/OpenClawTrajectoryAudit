@@ -34,9 +34,9 @@ PYTHONPATH=$PWD python3 -m agentaudit selftest    # 出现 F1 行即全链路通
 df -h /data
 ```
 
-> ⚠️ 若 `bash /data/serve_qwen36.sh` 报 `docker: ... layer does not exist`,或 `docker images` 是空的 —— **docker 镜像损坏,必须在线修**(见 §5 故障 D)。**修好、确认 vLLM 能起来,再断网。**
+> ⚠️ 若 `bash /data/serve_qwen36.sh` 报 `docker: ... layer does not exist`,或 `docker images` 是空的 —— docker 镜像损坏。**已有冷备份 `/root/vllm-ascend-v0.21.0rc1.tar`(系统盘),断网也能恢复**(见 §5 docker 恢复)。出发前确认 vLLM 能起来。
 >
-> 备注:vLLM 容器已设 `--restart unless-stopped`,机器重启会自动拉起;启动脚本已带 `HF_HUB_OFFLINE=1`,断网不会去找 HuggingFace。
+> 备注:vLLM 容器已设 `--restart unless-stopped`,机器重启会自动拉起;启动脚本已带 `HF_HUB_OFFLINE=1`,断网不会去找 HuggingFace;镜像 tar 备份在系统盘(与 /data 的 docker 仓库不同盘,跨盘冗余)。
 
 ---
 
@@ -127,14 +127,20 @@ PYTHONPATH=$PWD python3 -m agentaudit inspect /data/fulldata/extracted/<md5> --n
 | **F. 机器重启** | vLLM 容器会自动回来(--restart);没回来 `docker start vllm-qwen36`。审计任务**不会**自动回来 → 重跑 run_audit.sh 续跑 |
 | **G. 想提速 / 分批** | 已是关思考。可改 `config.yaml` 的 `run.concurrency`;或把 extracted 拆成几个子目录、分别 `--out` 并行跑 |
 
-### docker 恢复(仅在线时,§0 发现镜像损坏才用)
+### docker 恢复(镜像损坏 / `docker images` 空 / vLLM 起不来)
+镜像冷备份在**系统盘** `/root/vllm-ascend-v0.21.0rc1.tar`(18G),**断网也能恢复**:
 ```bash
-# 镜像损坏(layer does not exist)的彻底修法 —— 会清空所有 docker 镜像, 之后重拉 vllm-ascend
-sudo systemctl stop docker docker.socket
-sudo rm -rf /data/docker/overlay2 /data/docker/image /data/docker/buildkit
-sudo systemctl start docker
-docker pull quay.io/ascend/vllm-ascend:v0.21.0rc1-openeuler   # 需在线
-bash /data/serve_qwen36.sh                                     # 起 vLLM, 等 ready
+# 情况1: 只是镜像没了(store 没坏)—— 直接从备份加载
+docker load -i /root/vllm-ascend-v0.21.0rc1.tar && bash /data/serve_qwen36.sh
+
+# 情况2: 报 "layer does not exist"(overlay2 存储损坏)—— 先重置存储再加载
+systemctl stop docker docker.socket
+rm -rf /data/docker/overlay2 /data/docker/image /data/docker/buildkit   # 清损坏存储(会清空所有镜像)
+systemctl start docker
+docker load -i /root/vllm-ascend-v0.21.0rc1.tar                          # 离线恢复
+bash /data/serve_qwen36.sh                                                # 起 vLLM, 等 ready
+
+# 兜底(备份 tar 也丢了且在线): docker pull quay.io/ascend/vllm-ascend:v0.21.0rc1-openeuler
 ```
 
 ---
