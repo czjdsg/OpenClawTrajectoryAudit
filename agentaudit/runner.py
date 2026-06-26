@@ -77,6 +77,14 @@ def run_dataset(dataset_dir: str, cfg: Config) -> list[AuditVerdict]:
         "elapsed_s": round(time.time() - t0, 1),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 提交格式 md5,label
+    try:
+        from .eval import export_submission
+        sub = export_submission(str(results_path), str(out_dir / "submission.csv"))
+        sub_note = f"{sub['n']} 行" + (f", ⚠{sub['errors']} 条 error 按0占位(建议重跑消除)" if sub["errors"] else "")
+    except Exception as e:  # noqa: BLE001
+        sub_note = f"导出失败: {e}"
     print(f"[*] 汇总: total={summary['total']} risky={n_risky} safe={summary['safe']} error={n_err}, 本轮用时 {summary['elapsed_s']}s")
     print(f"[*] 结果: {results_path}")
+    print(f"[*] 提交文件(md5,label): {out_dir / 'submission.csv'} ({sub_note})")
     return verdicts

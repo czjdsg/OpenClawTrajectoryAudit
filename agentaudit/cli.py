@@ -5,6 +5,7 @@
   python -m agentaudit inspect <轨迹目录> [--no-model]
   python -m agentaudit audit <数据集目录> [--out DIR]
   python -m agentaudit eval <results.jsonl> <labels.(jsonl|csv)>
+  python -m agentaudit export <results.jsonl> <submission.csv>   # 导出 md5,label 提交格式
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import json
 from pathlib import Path
 
 from .config import load_config
-from .eval import evaluate, print_report
+from .eval import evaluate, export_submission, print_report
 from .features.assemble import assemble_evidence
 from .ingest.discover import TrajectoryPaths, _first_match
 from .llm.classify import classify
@@ -59,6 +60,12 @@ def cmd_eval(args):
     print_report(evaluate(args.results, args.labels))
 
 
+def cmd_export(args):
+    info = export_submission(args.results, args.out)
+    note = f"  ⚠ 含 {info['errors']} 条 error(按0占位, 建议先重跑消除)" if info["errors"] else ""
+    print(f"已导出 {info['n']} 行 (md5,label) -> {info['out']}{note}")
+
+
 def cmd_selftest(args):
     from . import sample as sample_mod
 
@@ -97,6 +104,11 @@ def main():
     p.add_argument("results", help="results.jsonl")
     p.add_argument("labels", help="labels.jsonl 或 .csv")
     p.set_defaults(func=cmd_eval)
+
+    p = sub.add_parser("export", help="导出 md5,label 提交格式 CSV")
+    p.add_argument("results", help="results.jsonl")
+    p.add_argument("out", nargs="?", default="submission.csv", help="输出 CSV (默认 submission.csv)")
+    p.set_defaults(func=cmd_export)
 
     args = ap.parse_args()
     args.func(args)

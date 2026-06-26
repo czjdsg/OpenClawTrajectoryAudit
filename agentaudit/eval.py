@@ -103,3 +103,32 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"混淆矩阵: TP={c['tp']} FP={c['fp']} FN={c['fn']} TN={c['tn']}")
     print(f"漏报率(FNR)={report['miss_rate']}  召回率={report['recall']}  精确率={report['precision']}  accuracy={report['accuracy']}")
     print(f"★ 主指标 F1 = {report['f1']}   (=2·precision·recall/(precision+recall))")
+
+
+def export_submission(results_path: str, out_csv: str) -> dict[str, Any]:
+    """把 results.jsonl 导出成提交格式 CSV: 表头 md5,label (label: risky=1, safe=0)。
+    与样例 results.csv 同格式。error 条按 0 占位并计数(应先重跑消除 error)。"""
+    latest: dict[str, int] = {}
+    n_err = 0
+    for line in Path(results_path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        tid = r.get("traj_id")
+        if not tid:
+            continue
+        if r.get("label") == "error":
+            n_err += 1
+            latest[tid] = 0  # 占位; 建议先重跑消除 error
+        else:
+            latest[tid] = 1 if r.get("risky") else 0
+    with open(out_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["md5", "label"])
+        for tid, lab in latest.items():
+            w.writerow([tid, lab])
+    return {"n": len(latest), "errors": n_err, "out": out_csv}
