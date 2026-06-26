@@ -71,7 +71,7 @@ bash scripts/run_audit.sh /data/fulldata/extracted /data/fulldata/outputs
 手动等价命令(脚本挂了时用):
 ```bash
 mkdir -p /data/fulldata/outputs
-tmux new-session -d -s audit "cd /data/agent-audit && PYTHONPATH=/data/agent-audit python3 -m agentaudit audit /data/fulldata/extracted --out /data/fulldata/outputs > /data/fulldata/outputs/run.log 2>&1"
+tmux new-session -d -s audit "cd /data/agent-audit && PYTHONPATH=/data/agent-audit python3 -u -m agentaudit audit /data/fulldata/extracted --out /data/fulldata/outputs 2>&1 | tee /data/fulldata/outputs/run.log"
 ```
 
 ---
@@ -87,8 +87,8 @@ bash scripts/status.sh /data/fulldata/outputs /data/fulldata/extracted
 ```bash
 grep -c . /data/fulldata/outputs/results.jsonl          # 已完成条数
 ls -d /data/fulldata/extracted/*/ | wc -l                # 总条数
-tmux attach -t audit                                      # 进 tmux 看实时(Ctrl-b 再 d 退出, 不杀任务)
-tail -f /data/fulldata/outputs/run.log                    # 日志(注:python 块缓冲, 进度行会滞后, 以 results 计数为准)
+tmux attach -t audit                                      # 进 tmux 看实时滚动(Ctrl-b 再 d 退出, 不杀任务)
+tail -f /data/fulldata/outputs/run.log                    # 看日志(已 python -u 关缓冲, 实时; 计数仍以 results.jsonl 为准)
 npu-smi info | grep 910B2                                 # 模型是否在干活
 ```
 

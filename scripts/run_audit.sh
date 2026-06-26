@@ -20,7 +20,8 @@ total=$(find "$EXT" -maxdepth 1 -mindepth 1 -type d | wc -l)
 done=$(grep -c . "$OUT/results.jsonl" 2>/dev/null || echo 0)
 echo "[*] 数据 $total 条, 已完成 $done 条, 启动续跑 (tmux 会话 'audit')..."
 tmux kill-session -t audit 2>/dev/null || true
-tmux new-session -d -s audit "cd '$HERE' && PYTHONPATH='$HERE' python3 -m agentaudit audit '$EXT' --out '$OUT' > '$OUT/run.log' 2>&1"
+# python -u(关缓冲)+ tee: 输出同时进 tmux 窗口(attach 可见实时) 和 run.log(持久化)
+tmux new-session -d -s audit "cd '$HERE' && PYTHONPATH='$HERE' python3 -u -m agentaudit audit '$EXT' --out '$OUT' 2>&1 | tee '$OUT/run.log'"
 sleep 2
 if tmux has-session -t audit 2>/dev/null; then
   echo "[*] 已启动。看进度:  bash scripts/status.sh $OUT"
