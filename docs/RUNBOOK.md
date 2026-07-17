@@ -42,16 +42,20 @@ df -h /data
 
 ## 1. 准备数据(解压成"每条一目录")
 
-正式数据为 **`alldata-s7.zip`**(外层包,内含若干 `<md5>.zip`,可能还有 README/results.csv)。两步:
+正式数据为外层包(如 `alldata-s7.zip` / `alldata_7`),内含若干 **`<md5>.zip` 或 `<md5>.tar.gz`**,可能还有 README/results.csv。两步:
 
 ```bash
 mkdir -p /data/fulldata && cd /data/fulldata
-unzip -q /路径/alldata-s7.zip               # -> 解出一个目录(内含 <md5>.zip)
+unzip -q /路径/alldata-s7.zip               # -> 解出一个目录(内含 <md5>.zip / <md5>.tar.gz)
 bash /data/agent-audit/scripts/prepare_data.sh /data/fulldata/alldata-s7 /data/fulldata/extracted
 ```
 
-`prepare_data.sh` 只挑 `*.zip` 解压(README/csv 自动忽略)。完成后 `/data/fulldata/extracted/<md5>/` 下应是 `session.jsonl` + (`audit.log` 或 `sysmon.jsonl`) + `network.pcap`;脚本末尾打印各层文件计数,核对数量。
-> 注:解出的目录名取决于 zip 内结构(如 `alldata-s7/`),用 `ls /data/fulldata` 确认后填到上面第二行。
+`prepare_data.sh` 自动识别 `*.zip` / `*.tar.gz` / `*.tgz`(README/csv 自动忽略),并且:
+- **可断点续跑**:顶层已有文件的 `<md5>/` 直接跳过,磁盘满/中断后重跑不会从头再解一遍;
+- **自动拍平**:部分归档内层多套一层目录,而 `discover` 只看 `<md5>/` 顶层文件(不递归),不拍平整条会被静默跳过 —— 脚本会把深层文件上提,并在末尾统计"拍平 N 条"。
+
+完成后 `/data/fulldata/extracted/<md5>/` 下应是 `session.jsonl` + (`audit.log` 或 `sysmon.jsonl`) + `network.pcap`;脚本末尾打印目录数/空目录数/各层文件计数,**核对数量**(空目录会被 discover 跳过,是"解压出来但没文件"的信号)。
+> 注:解出的目录名取决于外层包内结构(如 `alldata-s7/`),用 `ls /data/fulldata` 确认后填到上面第二行。
 (标签文件 `results.csv` 若随包提供,放 `/data/fulldata/results.csv` 备用于 §4 评估。)
 
 ---
